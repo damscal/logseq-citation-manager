@@ -1,3 +1,43 @@
+# [3.3.0](https://github.com/sawhney17/logseq-citation-manager/compare/v3.2.0...v3.3.0) (2026-07-19)
+
+
+### Features
+
+* **zotero-api:** Add native Zotero Web API support as data source
+  - Direct integration with Zotero Web API v3 (no local .bib file required)
+  - Support for both group and personal library endpoints
+  - Optional API key authentication for private libraries
+  - Configurable export format (bibtex/biblatex)
+  - Automatic pagination handling for large libraries (100+ items)
+  - Merged responses cached locally to minimize API calls
+
+* **caching:** Implement intelligent caching system with cooldown mechanism
+  - Time-based cooldown period (configurable, default 10 minutes)
+  - Slash commands automatically use cached data when cooldown hasn't elapsed
+  - Automatic cache refresh when cooldown period has passed
+  - "Reindex Citations DB" command bypasses cooldown for forced refresh
+  - Configurable startup behavior (fetch fresh vs load from cache)
+
+* **startup:** Add configurable startup behavior
+  - `reindexOnStartup` setting controls whether to fetch fresh data or load from cache
+  - When true: fetches from API/file and resets cooldown timer
+  - When false: loads from local cache without network requests
+
+* **settings:** Add new configuration options
+  - `dataSourceType`: Choose between "local" (.bib file) or "zotero" (API)
+  - `zoteroApiUrl`: Zotero Web API endpoint URL
+  - `zoteroApiKey`: Optional API key for private libraries
+  - `zoteroExportFormat`: Choose bibtex or biblatex format
+  - `zoteroCooldownMinutes`: Configure cooldown period (default 10)
+
+### Bug Fixes
+
+* **templates:** Fix crashes when templates are not configured
+  - Added null checks in `parseTemplateBlock` and `parseTemplatePage`
+  - Handle empty template settings gracefully
+  - Prevent errors when accessing properties on null/empty arrays
+  - Slash commands now work without requiring template configuration (inserts basic citation link as fallback)
+
 # [3.2.0](https://github.com/sawhney17/logseq-citation-manager/compare/v3.1.0...v3.2.0) (2023-12-07)
 
 

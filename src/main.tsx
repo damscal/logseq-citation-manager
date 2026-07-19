@@ -22,6 +22,7 @@ interface cachedBlock {
 var editAgain = true;
 const storageBucket = logseq.Assets.makeSandboxStorage();
 const ZOTERO_CACHE_KEY = "zotero_cache.bib";
+let lastZoteroFetch = 0;
 
 export const shouldEditAgain = () => {
   return editAgain;
@@ -93,9 +94,16 @@ const settings: SettingSchemaDesc[] = [
     enumPicker: "radio",
   },
   {
+    key: "zoteroCooldownMinutes",
+    title: "Zotero API Cooldown (minutes)",
+    description: "Minimum time between Zotero API calls. Slash commands will use cached data if this period hasn't elapsed since the last fetch. Set to 0 to always fetch fresh data.",
+    default: 10,
+    type: "number",
+  },
+  {
     key: "zoteroApiUrl",
     title: "Zotero API URL",
-    description: "The Zotero Web API endpoint for your library. Examples: https://api.zotero.org/groups/6186549/items (for a group library) or https://api.zotero.org/users/12345/items (for a personal library). You can also include collection paths like /collections/<collectionKey>/items.",
+    description: "The Zotero Web API endpoint for your library. Examples: https://api.zotero.org/groups/98765/items (for a group library) or https://api.zotero.org/users/12345/items (for a personal library). You can also include collection paths like /collections/<collectionKey>/items.",
     default: "",
     type: "string",
   },
@@ -167,7 +175,7 @@ const settings: SettingSchemaDesc[] = [
     key: "reindexOnStartup",
     title: "Reindex on startup?",
     description:
-      " Would you like to reindex the DB on startup? This would mean that the search results stay up to date throughuot but would mean lag on the first search after you restart logseq. Recommended with DBs that have less than 1000 references. You can force reindex through the command pallete",
+      " If true, fetch fresh data from the API (or local file) at Logseq startup and reset the cooldown timer. If false, load from the local cache file at startup without making any API calls.",
     default: true,
     type: "boolean",
   },
@@ -190,12 +198,14 @@ const settings: SettingSchemaDesc[] = [
 ];
 
 const dispatchPaperpileParse = async (mode, uuid) => {
-  if (!logseq.settings.reindexOnStartup) {
-    if ((await storageBucket.hasItem("paperpileDB.json")) == true) {
-      paperpileParsed = JSON.parse(
-        await storageBucket.getItem("paperpileDB.json")
-      );
-    } else if (logseq.settings.dataSourceType === "zotero" && await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
+  const isZotero = logseq.settings.dataSourceType === "zotero";
+  const cooldownMs = (logseq.settings.zoteroCooldownMinutes || 10) * 60 * 1000;
+  const cooldownPassed = Date.now() - lastZoteroFetch > cooldownMs;
+
+  if (isZotero && cooldownPassed) {
+    await getPaperPileFromZotero();
+  } else if (paperpileParsed.length === 0) {
+    if (isZotero && await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
       let tempPaperpile = await storageBucket.getItem(ZOTERO_CACHE_KEY);
       tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
       paperpile = tempPaperpile;
@@ -206,12 +216,14 @@ const dispatchPaperpileParse = async (mode, uuid) => {
       };
       const parsed = BibTeXParser.parse(paperpile, options) as BibTeXParser.Bibliography;
       paperpileParsed = parsed.entries;
+    } else if (!isZotero) {
+      await getPaperPileFromLocal();
     }
   }
 
   const block = await logseq.Editor.getBlock(uuid);
   if (paperpileParsed.length == 0) {
-    getPaperPile();
+    logseq.UI.showMsg("No citations available. Check your data source settings.", "Error", { timeout: 5 });
   } else {
     logseq.Editor.updateBlock(uuid, `inserting...`);
     showDB(paperpileParsed, mode, uuid, block.content);
@@ -355,6 +367,7 @@ const getPaperPileFromZotero = async () => {
     allBibtex = allBibtex.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
     
     await storageBucket.setItem(ZOTERO_CACHE_KEY, allBibtex);
+    lastZoteroFetch = Date.now();
     
     paperpile = allBibtex;
     createDB();
@@ -380,32 +393,30 @@ const getPaperPileFromZotero = async () => {
     logseq.UI.showMsg(errorMsg, "Error", { timeout: 5 });
   }
 };
-
-const getPaperPileFromZoteroCache = async () => {
-  if (await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
-    let tempPaperpile = await storageBucket.getItem(ZOTERO_CACHE_KEY);
-    tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
-    paperpile = tempPaperpile;
-    createDB();
-    logseq.UI.showMsg(
-      `Loaded ${paperpileParsed.length} citations from cache.`,
-      "success",
-      { timeout: 3 }
-    );
-  } else {
-    logseq.UI.showMsg(
-      "No cached Zotero data found. Please use 'Reindex Citations DB' to fetch from the API first.",
-      "Warning",
-      { timeout: 5 }
-    );
-  }
-};
 logseq.useSettingsSchema(settings);
 function main() {
   storageBucket.setItem("test", "test");
   logseq.setMainUIInlineStyle({
     zIndex: 11,
   });
+
+  const loadAtStartup = async () => {
+    if (logseq.settings.reindexOnStartup) {
+      await getPaperPile();
+    } else if (logseq.settings.dataSourceType === "zotero" && await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
+      let tempPaperpile = await storageBucket.getItem(ZOTERO_CACHE_KEY);
+      tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
+      paperpile = tempPaperpile;
+      const options: BibTeXParser.ParserOptions = {
+        errorHandler: (err) => {
+          console.warn("Citation plugin: error loading BibLaTeX entry:", err);
+        },
+      };
+      const parsed = BibTeXParser.parse(paperpile, options) as BibTeXParser.Bibliography;
+      paperpileParsed = parsed.entries;
+    }
+  };
+  loadAtStartup();
 
   logseq.App.registerCommand(
     "openAsPage",
@@ -447,25 +458,8 @@ function main() {
         "Reindex the citation DB in case you made changes to your .bib files",
     },
     (e) => {
+      lastZoteroFetch = 0;
       getPaperPile();
-    }
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: "Load Citations from Cache",
-      label:
-        "Load citations from local cache without calling the Zotero API",
-    },
-    (e) => {
-      if (logseq.settings.dataSourceType === "zotero") {
-        getPaperPileFromZoteroCache();
-      } else {
-        logseq.UI.showMsg(
-          "Cache loading is only available for Zotero data source.",
-          "Warning",
-          { timeout: 3 }
-        );
-      }
     }
   );
   logseq.Editor.registerSlashCommand(

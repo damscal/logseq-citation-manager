@@ -46,8 +46,12 @@
   - Set `Zotero Export Format`: Choose `bibtex` or `biblatex`
   - The plugin automatically paginates through all results (100 items per request) and merges them into a single BibTeX response.
   - The merged response is cached locally in `assets/storages/logseq-citation-manager/zotero_cache.bib` to avoid repeated API calls.
-  - Use the command palette command **"Load Citations from Cache"** to load from the local cache without making any API calls.
-  - Use **"Reindex Citations DB"** to force a fresh fetch from the Zotero API (this also updates the local cache).
+  - **Cooldown mechanism**: After a Zotero API call, the plugin waits a configurable cooldown period (default 10 minutes, set via `Zotero API Cooldown` setting) before making another API call. Slash commands will use cached data if the cooldown hasn't elapsed.
+  - **Startup behavior** (controlled by `Reindex on startup?` setting):
+    - If `true`: At Logseq startup, fetch fresh data from the Zotero API (or local file) and update the cache. This resets the cooldown timer.
+    - If `false`: At Logseq startup, load from the local cache file without making any API calls.
+  - **Slash commands** (Create Inline Literature Note, etc.): Check if the cooldown has passed. If yes, refresh from the API. If no, use the in-memory cache (or file cache if memory is empty).
+  - **Reindex Citations DB command**: Force a refresh from the Zotero API regardless of cooldown state, and reset the cooldown timer.
 ## Configuration
 - This plugin has a variety of configuration options
 - `citationReferenceDB`
@@ -68,9 +72,17 @@
 	- This is the title of the page that is created. It defaults to using the citekey and this is the recommended approach in order to ensure that all references are unique. You can, however, play around, and add more items and fields to the title if desired. 
 	- You can use dynamic variables like {type}, {author}, {citekey}, {author lastname} etc. in this field
 - `reindexOnStartup`
-	- By default, when you call the plugin for the first time after restarting logseq, it will index all the references in the database. This time is usually not significant and won't be noticeable. However, if you have a lot of references, over a thousand, it may take a while. 
-	- By turning this off, logseq implements a local cache of the references so that you won't have to do the initial indexing every time you call the plugin for the first time after restart. This is a good idea if you have a lot of references in your database but it is important to note that changes you make in your citation manager plugin will *not* be reflected here by default. 
-	- If you want to force the reindexing of the references, you can force reindex via the command pallete and searching for `reindex`. This could take a while so be patient. 
+	- Controls what happens at Logseq startup:
+	- If `true`: Fetch fresh data from the API (Zotero or local file) and update the cache. This resets the cooldown timer.
+	- If `false`: Load from the local cache file without making any API calls. This is useful if you want to avoid network requests on startup.
+	- Note: Slash commands also check the cooldown period independently of this setting.
+- `zoteroCooldownMinutes`
+	- Minimum time (in minutes) between Zotero API calls. Default is 10 minutes.
+	- When you trigger a slash command, the plugin checks if this cooldown period has elapsed since the last Zotero API call.
+	- If the cooldown has NOT elapsed: Use cached data (no API call).
+	- If the cooldown HAS elapsed: Fetch fresh data from the Zotero API and update the cache.
+	- Set to 0 to always fetch fresh data on every slash command.
+	- The "Reindex Citations DB" command bypasses this cooldown and always fetches fresh data.
 
 ## Templates
  - You can check out ./citation_manager_template.md for an example of a page template
