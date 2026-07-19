@@ -35,6 +35,8 @@ jobs:
       - run: pnpm build
       - name: Install zip
         uses: montudor/action-zip@v1
+      - name: Create release zip
+        run: zip -qq -r logseq-citation-manager.zip dist readme.md icon.png LICENSE package.json
       - name: Release
         run: npx semantic-release
         env:
