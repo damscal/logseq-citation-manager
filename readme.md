@@ -36,6 +36,18 @@
   - Select a collection in Zotero's left sidebar that you want to export.
   - Click `File` -> `Export library ...`. Select `Better BibLaTeX` or `Better CSL JSON` as the format. (We recommend using the BibLaTeX export unless you experience performance issues. The BibLaTeX format includes more information that you can reference from logseq, such as associated PDF attachments, but loads more slowly than the JSON export.)
   - You can optionally choose "Keep updated" to automatically re-export the collection -- this is recommended!
+- **Zotero Web API (no local .bib file needed)**
+  - Set `Data Source Type` to `zotero` in the plugin settings.
+  - Set `Zotero API URL` to the endpoint for your library:
+    - Group library: `https://api.zotero.org/groups/<groupID>/items`
+    - Personal library: `https://api.zotero.org/users/<userID>/items`
+    - Specific collection: append `/collections/<collectionKey>/items`
+  - Set `Zotero API Key` (optional): Required for non-public libraries. Create one at https://www.zotero.org/settings/keys/new
+  - Set `Zotero Export Format`: Choose `bibtex` or `biblatex`
+  - The plugin automatically paginates through all results (100 items per request) and merges them into a single BibTeX response.
+  - The merged response is cached locally in `assets/storages/logseq-citation-manager/zotero_cache.bib` to avoid repeated API calls.
+  - Use the command palette command **"Load Citations from Cache"** to load from the local cache without making any API calls.
+  - Use **"Reindex Citations DB"** to force a fresh fetch from the Zotero API (this also updates the local cache).
 ## Configuration
 - This plugin has a variety of configuration options
 - `citationReferenceDB`

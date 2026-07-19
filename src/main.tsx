@@ -21,6 +21,7 @@ interface cachedBlock {
 
 var editAgain = true;
 const storageBucket = logseq.Assets.makeSandboxStorage();
+const ZOTERO_CACHE_KEY = "zotero_cache.bib";
 
 export const shouldEditAgain = () => {
   return editAgain;
@@ -78,9 +79,41 @@ const settings: SettingSchemaDesc[] = [
   {
     key: "citationReferenceDB",
     title: "Citation DB Name",
-    description: "Enter the name of the citation DB. For instructions on how to handle this, check the readme: https://github.com/sawhney17/logseq-citation-manager",
+    description: "Enter the name of the citation DB (for local file mode). For instructions on how to handle this, check the readme: https://github.com/sawhney17/logseq-citation-manager",
     default: "citationDB.bib",
     type: "string",
+  },
+  {
+    key: "dataSourceType",
+    title: "Data Source Type",
+    description: "Choose whether to load citations from a local .bib file or from the Zotero Web API.",
+    default: "local",
+    type: "enum",
+    enumChoices: ["local", "zotero"],
+    enumPicker: "radio",
+  },
+  {
+    key: "zoteroApiUrl",
+    title: "Zotero API URL",
+    description: "The Zotero Web API endpoint for your library. Examples: https://api.zotero.org/groups/6186549/items (for a group library) or https://api.zotero.org/users/12345/items (for a personal library). You can also include collection paths like /collections/<collectionKey>/items.",
+    default: "",
+    type: "string",
+  },
+  {
+    key: "zoteroApiKey",
+    title: "Zotero API Key (Optional)",
+    description: "Your Zotero API key. Required for accessing non-public libraries. Create one at https://www.zotero.org/settings/keys/new. Leave blank for public group libraries.",
+    default: "",
+    type: "string",
+  },
+  {
+    key: "zoteroExportFormat",
+    title: "Zotero Export Format",
+    description: "The format to request from the Zotero API. 'bibtex' is standard BibTeX, 'biblatex' is BibLaTeX (more features).",
+    default: "bibtex",
+    type: "enum",
+    enumChoices: ["bibtex", "biblatex"],
+    enumPicker: "radio",
   },
   {
     key: "smartsearch",
@@ -162,6 +195,17 @@ const dispatchPaperpileParse = async (mode, uuid) => {
       paperpileParsed = JSON.parse(
         await storageBucket.getItem("paperpileDB.json")
       );
+    } else if (logseq.settings.dataSourceType === "zotero" && await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
+      let tempPaperpile = await storageBucket.getItem(ZOTERO_CACHE_KEY);
+      tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
+      paperpile = tempPaperpile;
+      const options: BibTeXParser.ParserOptions = {
+        errorHandler: (err) => {
+          console.warn("Citation plugin: error loading BibLaTeX entry:", err);
+        },
+      };
+      const parsed = BibTeXParser.parse(paperpile, options) as BibTeXParser.Bibliography;
+      paperpileParsed = parsed.entries;
     }
   }
 
@@ -216,13 +260,17 @@ const showDB = (parsed, mode, uuid, oc) => {
 };
 
 const getPaperPile = async () => {
-  // ...
+  if (logseq.settings.dataSourceType === "zotero") {
+    await getPaperPileFromZotero();
+  } else {
+    await getPaperPileFromLocal();
+  }
+};
 
+const getPaperPileFromLocal = async () => {
   if (await storageBucket.hasItem(`${logseq.settings.citationReferenceDB}`)) {
     let tempPaperpile = await storageBucket.getItem(`${logseq.settings.citationReferenceDB}`);
-    // Remove crossref field to avoid circular references
     tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
-    // Assign the processed data to the global variable paperpile
     paperpile = tempPaperpile;
     createDB();
   }
@@ -233,27 +281,125 @@ const getPaperPile = async () => {
       { timeout: 5 }
     );
   }
-  // axios
-  //   .get(`file://${logseq.settings.citationReferenceDB}`)
-  //   .then(async (result) => {
-  //     console.log(result)
-  //     paperpile = result.data;
-  //     if (logseq.settings.citationReferenceDB.endsWith(".json")) {
-  //       logseq.UI.showMsg("Sucessfully updated the DB with JSON");
-  //       paperpileParsed = JSON.parse(paperpile);
-  //     } else {
-  //       createDB();
-  //     }
-  //   })
-  //   .catch((err) => {
-  //     logseq.UI.showMsg(
-  //       "Whoops!, Something went wrong when fetching the citation DB. Please check the path and try again.",
-  //       "Error",
-  //       { timeout: 5 }
-  //     );
-  //     console.log(err);
-  //   });
-  // storageBucket.getItem
+};
+
+const getPaperPileFromZotero = async () => {
+  const apiUrl = logseq.settings.zoteroApiUrl?.trim();
+  if (!apiUrl) {
+    logseq.UI.showMsg(
+      "Zotero API URL is not configured. Please set it in the plugin settings.",
+      "Error",
+      { timeout: 5 }
+    );
+    return;
+  }
+
+  const apiKey = logseq.settings.zoteroApiKey?.trim();
+  const exportFormat = logseq.settings.zoteroExportFormat || "bibtex";
+  const limit = 100;
+  let start = 0;
+  let allBibtex = "";
+  let totalResults = Infinity;
+
+  try {
+    logseq.UI.showMsg("Fetching citations from Zotero API...", "info", { timeout: 2 });
+
+    while (start < totalResults) {
+      const separator = apiUrl.includes("?") ? "&" : "?";
+      const url = `${apiUrl}${separator}format=${exportFormat}&limit=${limit}&start=${start}`;
+
+      const headers: Record<string, string> = {
+        "Zotero-API-Version": "3",
+      };
+      if (apiKey) {
+        headers["Zotero-API-Key"] = apiKey;
+      }
+
+      const response = await axios.get(url, {
+        headers,
+        timeout: 30000,
+      });
+
+      const totalResultsHeader = response.headers["total-results"];
+      if (totalResultsHeader !== undefined) {
+        totalResults = parseInt(totalResultsHeader, 10);
+        if (isNaN(totalResults)) {
+          totalResults = Infinity;
+        }
+      }
+
+      const data = response.data;
+      if (typeof data === "string") {
+        allBibtex += data;
+      } else {
+        allBibtex += String(data);
+      }
+
+      start += limit;
+
+      if (!totalResultsHeader || totalResults === Infinity) {
+        if (!data || (typeof data === "string" && data.trim().length === 0)) {
+          break;
+        }
+      }
+    }
+
+    if (allBibtex.trim().length === 0) {
+      logseq.UI.showMsg(
+        "No citations returned from Zotero API. Check your URL and API key.",
+        "Warning",
+        { timeout: 5 }
+      );
+      return;
+    }
+
+    allBibtex = allBibtex.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
+    
+    await storageBucket.setItem(ZOTERO_CACHE_KEY, allBibtex);
+    
+    paperpile = allBibtex;
+    createDB();
+    logseq.UI.showMsg(
+      `Successfully loaded ${paperpileParsed.length} citations from Zotero.`,
+      "success",
+      { timeout: 3 }
+    );
+  } catch (err) {
+    console.error(err);
+    let errorMsg = "Failed to fetch from Zotero API.";
+    if (axios.isAxiosError(err)) {
+      if (err.response?.status === 403) {
+        errorMsg = "Zotero API returned 403 Forbidden. Check your API key and permissions.";
+      } else if (err.response?.status === 404) {
+        errorMsg = "Zotero API URL not found (404). Check the URL in settings.";
+      } else if (err.response?.status === 429) {
+        errorMsg = "Zotero API rate limit exceeded. Try again later.";
+      } else if (err.code === "ECONNABORTED") {
+        errorMsg = "Zotero API request timed out.";
+      }
+    }
+    logseq.UI.showMsg(errorMsg, "Error", { timeout: 5 });
+  }
+};
+
+const getPaperPileFromZoteroCache = async () => {
+  if (await storageBucket.hasItem(ZOTERO_CACHE_KEY)) {
+    let tempPaperpile = await storageBucket.getItem(ZOTERO_CACHE_KEY);
+    tempPaperpile = tempPaperpile.replace(/^\s*crossref\s*=\s*{[^}]*},?\s*$/gm, '');
+    paperpile = tempPaperpile;
+    createDB();
+    logseq.UI.showMsg(
+      `Loaded ${paperpileParsed.length} citations from cache.`,
+      "success",
+      { timeout: 3 }
+    );
+  } else {
+    logseq.UI.showMsg(
+      "No cached Zotero data found. Please use 'Reindex Citations DB' to fetch from the API first.",
+      "Warning",
+      { timeout: 5 }
+    );
+  }
 };
 logseq.useSettingsSchema(settings);
 function main() {
@@ -303,6 +449,24 @@ function main() {
     },
     (e) => {
       getPaperPile();
+    }
+  );
+  logseq.App.registerCommandPalette(
+    {
+      key: "Load Citations from Cache",
+      label:
+        "Load citations from local cache without calling the Zotero API",
+    },
+    (e) => {
+      if (logseq.settings.dataSourceType === "zotero") {
+        getPaperPileFromZoteroCache();
+      } else {
+        logseq.UI.showMsg(
+          "Cache loading is only available for Zotero data source.",
+          "Warning",
+          { timeout: 3 }
+        );
+      }
     }
   );
   logseq.Editor.registerSlashCommand(
