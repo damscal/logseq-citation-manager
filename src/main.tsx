@@ -86,9 +86,9 @@ const settings: SettingSchemaDesc[] = [
   {
     key: "dataSourceType",
     title: "Data Source Type",
-    description: "Choose whether to load citations from a local .bib file or from the Zotero Web API.",
+    description: "Choose whether to load citations from a local .bib file or from the Zotero Web API. Valid values: \"local\", \"zotero\".",
     default: "local",
-    type: "enum",
+    type: "string",
     enumChoices: ["local", "zotero"],
     enumPicker: "radio",
   },
@@ -109,9 +109,9 @@ const settings: SettingSchemaDesc[] = [
   {
     key: "zoteroExportFormat",
     title: "Zotero Export Format",
-    description: "The format to request from the Zotero API. 'bibtex' is standard BibTeX, 'biblatex' is BibLaTeX (more features).",
+    description: "The format to request from the Zotero API. Valid values: \"bibtex\" (standard BibTeX), \"biblatex\" (BibLaTeX, more features).",
     default: "bibtex",
-    type: "enum",
+    type: "string",
     enumChoices: ["bibtex", "biblatex"],
     enumPicker: "radio",
   },
@@ -211,7 +211,6 @@ const dispatchPaperpileParse = async (mode, uuid) => {
 
   const block = await logseq.Editor.getBlock(uuid);
   if (paperpileParsed.length == 0) {
-    logseq.UI.showMsg("No existing DB could be found, reloading DB...");
     getPaperPile();
   } else {
     logseq.Editor.updateBlock(uuid, `inserting...`);
