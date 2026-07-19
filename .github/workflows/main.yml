@@ -38,6 +38,6 @@ jobs:
       - name: Create release zip
         run: zip -qq -r logseq-citation-manager.zip dist readme.md icon.png LICENSE package.json
       - name: Release
-        run: npx semantic-release
+        run: pnpm exec semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
